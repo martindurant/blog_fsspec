@@ -3,35 +3,34 @@
 Originally created for the needs of [Dask](http://dask.pydata.org),
 we have spun out a general
 file system implementation and specification, to provide all users
-with simple access to many local, cluster and remove storage media.
-Dask and Intake have moved to use this new package: `fsspec`,
-and it will be at the core of data access in Anaconda Enterprise.
+with simple access to many local, cluster, and remote storage media.
+Dask and Intake have moved to use this new package: 
+[`fsspec`](https://github.com/intake/filesystem_spec/).
 
  ## Introduction
  
 For context, we are talking about the low-level business of getting
-raw bytes from some location. We are used to doing that on a local disc,
+raw bytes from some location. We are used to doing that on a local disk,
 but communicating with other storage mechanisms can be tricky, and
-certainly *different* in every case. For example consider, how you
-would go about reading some file from HDFS, from some server you have SSH
-credentials for, or some cloud service like AWS S3? Since these are
+certainly *different* in every case. For example, consider the 
+different ways you would go about reading files from 
+Hadoop, a server for which you have SSH credentials, or for a cloud 
+storage service like Amazon S3. Since these are
 important to answer when dealing with big data, we developed code to
 complement Dask just for the job, and released packages like `s3fs`
 and `gcsfs`.
 
 We found that those packages, which were built and released standalone,
 because popular even without Dask, partly because they were being used
-by other pydata libraries such as `pandas` and `xarray`. So we realised
-that the general idea or dealing with arbitrary file systems, as well as
+by other PyData libraries such as `pandas` and `xarray`. So we realised
+that the general idea of dealing with arbitrary file systems, as well as
 helpful code to map URLs to bytes, should not be buried in Dask, but should
 be made open and available to everyone, even if they are not interested
-in parallel/out-of-core computing. We therefore released 
-[`fsspec`](https://github.com/intake/filesystem_spec/) and rebased the
-other projects to use it.
+in parallel/out-of-core computing.
 
 ## Examples
  
-Consider the following lines of code
+Consider the following lines of code (which uses [`s3fs`](https://github.com/dask/s3fs)):
  
  ```python
 >>> import fsspec
@@ -51,10 +50,11 @@ within a context; but `f` is a regular file-like object which can be passed to
 many python functions expecting to use methods like `readline()`. The output is
 two lines of data from the famous Iris Dataset.
 
-It is worth noting that the file is random access, if in uncompressed bytes mode; this
-means that you can access smaller parts of massive files without having to download the
-whole thing, something which is crucial to big data processing locally or in the cloud,
-the kind of situation in which Dask shines.
+This file is stored uncompressed, and can be opened in random-access bytes mode.  
+This allows seeking to and extracting smaller parts of a potentially large file 
+without having to download the whole thing.  When dealing with large data, this is 
+useful for both local data exploration, as well as parallel processing in the cloud 
+(which is exactly how Dask uses `fsspec`).
 
 Now compare with the following:
 
@@ -69,8 +69,11 @@ sepallength,sepalwidth,petallength,petalwidth,class
 4.9,3.0,1.4,0.2,Iris-setosa
 ```
 
-This uses a different backed for HTTP locations, but has *exactly the same
-API*. This version of the data happens to include the header line.
+This uses a different backend for HTTP locations, but has *exactly the same
+API*. (The output is slightly different because this version of the dataset 
+includes a header line.)
+
+## Remote File Systems
 
 Alternatively, you can work with file system instances, which have all of the
 methods that you would expect, inspired by the builtin `os` module:
@@ -99,9 +102,29 @@ The point is, you do (almost) exactly the same thing for any of the several
 [backend file systems](https://github.com/intake/filesystem_spec/blob/master/fsspec/registry.py#L10),
 and you get the benefit of extra features for free:
 
-- transparent decompression and text mode
+- transparent decompression and text mode with the `open()` and `open_files()` functions,
+the latter of which will expand glob strings automatically
 - key-value dictionary views of directories
-- transactional writing
+```python
+>>> m = fsspec.get_mapper('s3://zarr-demo/store', anon=True)
+>>> list(m)
+['.zattrs',
+ '.zgroup',
+ 'foo/.zattrs',
+...]
+>>> m['.zattrs']
+b'{}'
+```
+
+- transactional writing: all files are finalised only when the context ends, and in the
+case of an exception, will be rolled back/discarded
+```python
+>>> fs = fsspec.filesystem('s3')  # requires credentials
+>>> with fs.transaction:
+...     fs.put('localfile', 'mybucket/remotefile')
+...     raise RuntimeError        
+>>> assert not fs.exists('mybucket/remotefile')
+```
 - and [many more](https://filesystem-spec.readthedocs.io/en/latest/index.html#highlights)
 
 ## Unified interface
